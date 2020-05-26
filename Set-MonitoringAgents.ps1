@@ -5,8 +5,11 @@
 #>
 <#
 
-.PARAMETER StorageDiagnostics
-Name of the Storage Account to store Diagnostics data
+.PARAMETER LinStorageDiagnostics
+Name of the Storage Account to store Diagnostics data for Linux Vms
+
+.PARAMETER WinStorageDiagnostics
+Name of the Storage Account to store Diagnostics data for Windows VMs
 
 .PARAMETER StorageResourceGroup
 Name of the Storage Account Resource Grou
@@ -23,19 +26,24 @@ Path for the ARM template that deploys the Log Analytics Workspace
 .PARAMETER LawRegion
 Region for the Log Analytics Workspace
 
-.PARAMETER DiagnosticsFile
-Path for the Diagnostics file
+.PARAMETER LinDiagnosticsFile
+Path for the Linux Diagnostics config file
+
+.PARAMETER WinDiagnosticsFile
+Path for the Windows Diagnostics config file
 
 #>
 
 param(
-    [Parameter(mandatory = $true)][string]$StorageDiagnostics,
+    [Parameter(mandatory = $true)][string]$LinStorageDiagnostics,
+    [Parameter(mandatory = $true)][string]$WinStorageDiagnostics,
     [Parameter(mandatory = $true)][string]$StorageResourceGroup,
     [Parameter(mandatory = $true)][string]$LawName,
     [Parameter(mandatory = $false)][string]$MonitoringResourceGroup,
     [Parameter(mandatory = $false)][string]$Template,
     [Parameter(mandatory = $false)][string]$LawRegion,
-    [Parameter(mandatory = $false)][switch]$DiagnosticsFile
+    [Parameter(mandatory = $false)][switch]$LinDiagnosticsFile,
+    [Parameter(mandatory = $false)][switch]$WinDiagnosticsFile
 )
 
 #Get VMs
@@ -44,29 +52,44 @@ $VMs = Get-AzVM
 #--- Boot Diagnostics ---
 
 foreach ($VM in $VMs){
-    $VMContext = Get-AzVM -ResourceGroupName $VM.ResourceGroupName -vmname $VM.Name
-    if ($VMContext.DiagnosticsProfile.BootDiagnostics.Enabled){
-        Write-Host "VM $VM.Name has Boot Diagnostics enabled."
+
+    if ($VM.DiagnosticsProfile.BootDiagnostics.Enabled){
+        Write-Host "VM "$VM.Name" has Boot Diagnostics enabled."
     }
-    else{
-        Write-Host "VM $VM.Name does not have Boot Diagnostics enabled. Proceeding to enable it."
-        Set-AzVMBootDiagnostic -VM $VM -Enable -ResourceGroupName $StorageResourceGroup -StorageAccountName $StorageDiagnostics
-        Write-Host "VM $VM.Name has now enabled Boot Diagnostics."
+    elseif ($VM.StorageProfile.OsDisk.OsType -eq "Linux"){
+        Write-Host "VM "$VM.Name" does not have Boot Diagnostics enabled. Proceeding to enable it."
+        Set-AzVMBootDiagnostic -VM $VM -Enable -ResourceGroupName $StorageResourceGroup -StorageAccountName $LinStorageDiagnostics
+        Write-Host "VM "$VM.Name" has now enabled Boot Diagnostics."
     }
-}
+    elseif ($VM.StorageProfile.OsDisk.OsType -eq "Windows"){
+        Write-Host "VM "$VM.Name" does not have Boot Diagnostics enabled. Proceeding to enable it."
+        Set-AzVMBootDiagnostic -VM $VM -Enable -ResourceGroupName $StorageResourceGroup -StorageAccountName $WinStorageDiagnostics
+        Write-Host "VM "$VM.Name" has now enabled Boot Diagnostics."
+    }
+
 
 #--- Diagnostics Extension ---
-$publicSettings = [IO.File]::ReadAllText($DiagnosticsFile)
-$publicSettings = $publicSettings.Replace('__DIAGNOSTIC_STORAGE_ACCOUNT__', $StorageDiagnostics)
+$linpublicSettings = [IO.File]::ReadAllText($LinDiagnosticsFile)
+$linpublicSettings = $linpublicSettings.Replace('__DIAGNOSTIC_STORAGE_ACCOUNT__', $LinStorageDiagnostics)
 
-$sasToken = New-AzStorageAccountSASToken -Service Blob,Table -ResourceType Service,Container,Object -Permission "racwdlup" -Context (Get-AzStorageAccount -ResourceGroupName $StorageResourceGroup -AccountName $StorageDiagnostics).Context
-$protectedSettings="{'storageAccountName': '$StorageResourceGroup', 'storageAccountSasToken': '$sasToken'}"
+$winpublicSettings = [IO.File]::ReadAllText($WinDiagnosticsFile)
+$winpublicSettings = $winpublicSettings.Replace('__DIAGNOSTIC_STORAGE_ACCOUNT__', $WinStorageDiagnostics)
+
+$linSasToken = New-AzStorageAccountSASToken -Service Blob,Table -ResourceType Service,Container,Object -Permission "racwdlup" -Context (Get-AzStorageAccount -ResourceGroupName $StorageResourceGroup -AccountName $LinStorageDiagnostics).Context
+$protectedSettings="{'storageAccountName': '$StorageResourceGroup', 'storageAccountSasToken': '$linSasToken'}"
+$winSaKey = (Get-AzStorageAccountKey -ResourceGroupName $StorageResourceGroup -Name $WinStorageDiagnostics).Value[0]
 
 foreach ($VM in $VMs){
-    $VMContext = Get-AzVM -ResourceGroupName $VM.ResourceGroupName -vmname $VM.Name
-    $publicSettings = $publicSettings.Replace('__VM_RESOURCE_ID__', $VM.Id)
+
     if ($VM.StorageProfile.OsDisk.OsType -eq "Linux"){
-        Set-AzVMExtension -ResourceGroupName $VM.ResourceGroupName -VMName $VM.Name -Location $VM.Location -ExtensionType "LinuxDiagnostic" -Publisher "Microsoft.Azure.Diagnostics" -Name "LinuxDiagnostic" -SettingString $publicSettings -ProtectedSettingString $protectedSettings -TypeHandlerVersion 3.0 -Verbose
+        $linpublicSettings = $linpublicSettings.Replace('__VM_RESOURCE_ID__', $VM.Id)
+        #Set-AzVMExtension -ResourceGroupName $VM.ResourceGroupName -VMName $VM.Name -Location $VM.Location -ExtensionType "LinuxDiagnostic" -Publisher "Microsoft.Azure.Diagnostics" -Name "LinuxDiagnostic" -SettingString $linpublicSettings -ProtectedSettingString $protectedSettings -TypeHandlerVersion 3.0 -Verbose
+    }
+    elseif ($VM.StorageProfile.OsDisk.OsType -eq "Windows") {
+        $winpublicSettings = $winpublicSettings.Replace('__VM_RESOURCE_ID__', $VM.Id)
+        Set-Content -Path 'config.json' -Value $winpublicSettings
+        Set-AzVMDiagnosticsExtension -ResourceGroupName $VM.ResourceGroupName -VMName $VM.Name -Location $VM.Location -AutoUpgradeMinorVersion $true -DiagnosticsConfigurationPath "config.json" -StorageAccountKey $winSaKey -verbose
+        Remove-Item "config.json"
     }
 }
 

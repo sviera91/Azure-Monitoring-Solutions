@@ -1,5 +1,6 @@
 {
   "StorageAccount": "__DIAGNOSTIC_STORAGE_ACCOUNT__",
+  "StorageType": "TableAndBlob",
   "ladCfg": {
     "diagnosticMonitorConfiguration": {
       "eventVolume": "Medium",
