@@ -23,7 +23,10 @@
             "name": "[parameters('WorkspaceName')]",
             "location": "[parameters('WorkspaceLocation')]",
             "properties":{
-                "retentionInDays": "31"
+                "sku": {
+                    "name": "PerGB2018"
+                },
+                "retentionInDays": 30
             },
             "resources": [
                 {
