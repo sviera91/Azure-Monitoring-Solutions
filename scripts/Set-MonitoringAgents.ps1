@@ -66,7 +66,7 @@ foreach ($VM in $VMs){
         Set-AzVMBootDiagnostic -VM $VM -Enable -ResourceGroupName $StorageResourceGroup -StorageAccountName $WinStorageDiagnostics
         Write-Host "VM "$VM.Name" has now enabled Boot Diagnostics."
     }
-
+}
 
 #--- Diagnostics Extension ---
 $linpublicSettings = [IO.File]::ReadAllText($LinDiagnosticsFile)
@@ -76,7 +76,6 @@ $winpublicSettings = [IO.File]::ReadAllText($WinDiagnosticsFile)
 $winpublicSettings = $winpublicSettings.Replace('__DIAGNOSTIC_STORAGE_ACCOUNT__', $WinStorageDiagnostics)
 
 $linSasToken = New-AzStorageAccountSASToken -Service Blob,Table -ResourceType Service,Container,Object -Permission "racwdlup" -Context (Get-AzStorageAccount -ResourceGroupName $StorageResourceGroup -AccountName $LinStorageDiagnostics).Context
-$protectedSettings="{'storageAccountName': '$StorageResourceGroup', 'storageAccountSasToken': '$linSasToken'}"
 $winSaKey = (Get-AzStorageAccountKey -ResourceGroupName $StorageResourceGroup -Name $WinStorageDiagnostics).Value[0]
 
 foreach ($VM in $VMs){
